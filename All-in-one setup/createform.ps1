@@ -16,19 +16,21 @@ $script:duplicateFormSuffix = "_tmp" #the suffix will be added to all HelloID re
 #NOTE: You can also update the HelloID Global variable values afterwards in the HelloID Admin Portal: https://<CUSTOMER>.helloid.com/admin/variablelibrary
 $globalHelloIDVariables = [System.Collections.Generic.List[object]]@();
 
-#Global variable #1 >> ADusersSearchOU
+#Global variable #1 >> AdGroupsSearchOU
+$tmpName = @'
+AdGroupsSearchOU
+'@ 
+$tmpValue = @'
+DC=zeeman,DC=com
+'@ 
+$globalHelloIDVariables.Add([PSCustomObject]@{name = $tmpName; value = $tmpValue; secret = "False"});
+
+#Global variable #2 >> ADusersSearchOU
 $tmpName = @'
 ADusersSearchOU
 '@ 
 $tmpValue = @'
-'@ 
-$globalHelloIDVariables.Add([PSCustomObject]@{name = $tmpName; value = $tmpValue; secret = "False"});
-
-#Global variable #2 >> ADgroupsSearchOU
-$tmpName = @'
-ADgroupsSearchOU
-'@ 
-$tmpValue = @'
+DC=zeeman,DC=com
 '@ 
 $globalHelloIDVariables.Add([PSCustomObject]@{name = $tmpName; value = $tmpValue; secret = "False"});
 
@@ -330,58 +332,66 @@ foreach ($item in $globalHelloIDVariables) {
 
 
 <# Begin: HelloID Data sources #>
-<# Begin: DataSource "ad-group-manage-memberships | AD-Get-Users-Not-In-Group" #>
+<# Begin: DataSource "ad-group-manage-memberships | AD-Get-Groups-Wildcard-Name-Mail" #>
 $tmpPsScript = @'
 # Variables configured in form
-$filter = "*"
+$searchValue = $dataSource.searchValue
+if ($searchValue -eq "*") {
+    $filter = "Name -like '*'"
+}
+else {
+    $filter = "Name -like '*$searchValue*' -or mail -like '*$searchValue*'"
+}
 
 # Global variables
-$searchOUs = $ADusersSearchOU
+$searchOUs = $AdGroupsSearchOu
 
 # Fixed values
-$propertiesToSelect = @(                    
+$propertiesToSelect = @(
+    "ObjectGuid",
     "SamAccountName",
-    "DisplayName",
     "Name",
-    "UserPrincipalName",
-    "Enabled", 
-    "Description", 
-    "Company",
-    "Department",
-    "Title",
-    "ObjectGuid"
+    "Description",
+    "Mail",
+    "DistinguishedName"
 ) # Properties to select from Microsoft AD, comma separated
 
+# Set debug logging
+$VerbosePreference = "SilentlyContinue"
+$InformationPreference = "Continue"
+$WarningPreference = "Continue"
+
 try {
-    #region Searching user
-    $actionMessage = "searching AD account(s)"
+    #region Searching groups
+    $actionMessage = "querying AD group(s) matching the filter [$filter] in OU(s) [$($searchOUs)]"
 
     $ous = $searchOUs -split ';'
-    $users = foreach ($item in $ous) {
-        $getAdUsersSplatParams = @{
+    $adGroups = [System.Collections.ArrayList]@()
+    foreach ($ou in $ous) {
+        $actionMessage = "querying AD group(s) matching the filter [$filter] in OU [$($ou)]"
+        $getAdGroupsSplatParams = @{
             Filter      = $filter
-            Searchbase  = $item
+            Searchbase  = $ou
             Properties  = $propertiesToSelect
             Verbose     = $False
             ErrorAction = "Stop"
         }
-        Get-AdUser @getAdUsersSplatParams | Select-Object -Property $propertiesToSelect
-    }
+        $getAdGroupsResponse = Get-AdGroup @getAdGroupsSplatParams | Select-Object -Property $propertiesToSelect
 
-
-    #endregion Searching user
-
-    #region Sorting user object(s)
-    $users = $users | Sort-Object -Property DisplayName
-    $resultCount = @($users).Count
-    Write-Information "Result count: $resultCount"
-         
-    if ($resultCount -gt 0) {
-        foreach ($user in $users) {
-            Write-Output $user
+        if ($getAdGroupsResponse -is [array]) {
+            [void]$adGroups.AddRange($getAdGroupsResponse)
+        }
+        else {
+            [void]$adGroups.Add($getAdGroupsResponse)
         }
     }
-    #endregion Sorting user object(s)
+    Write-Information "Queried AD group(s) matching the filter [$filter] in OU(s) [$($searchOUs)]. Result count: $(($adGroups | Measure-Object).Count)"
+
+    # Sort and Send results to HelloID
+    $actionMessage = "sending results to HelloID"
+    $adGroups | Sort-Object -Property Name | ForEach-Object {
+        Write-Output $_
+    } 
 }
 catch {
     $ex = $PSItem
@@ -391,61 +401,88 @@ catch {
 }
 '@ 
 $tmpModel = @'
-[{"key":"SamAccountName","type":0},{"key":"DisplayName","type":0},{"key":"Name","type":0},{"key":"UserPrincipalName","type":0},{"key":"Enabled","type":0},{"key":"Description","type":0},{"key":"Company","type":0},{"key":"Department","type":0},{"key":"Title","type":0},{"key":"ObjectGuid","type":0}]
+[{"key":"ObjectGuid","type":0},{"key":"SamAccountName","type":0},{"key":"Name","type":0},{"key":"Description","type":0},{"key":"Mail","type":0},{"key":"DistinguishedName","type":0}]
 '@ 
 $tmpInput = @'
-[]
+[{"description":null,"translateDescription":false,"inputFieldType":1,"key":"searchValue","type":0,"options":1}]
 '@ 
-$dataSourceGuid_1 = [PSCustomObject]@{} 
-$dataSourceGuid_1_Name = @'
-ad-group-manage-memberships | AD-Get-Users-Not-In-Group
+$dataSourceGuid_0 = [PSCustomObject]@{} 
+$dataSourceGuid_0_Name = @'
+ad-group-manage-memberships | AD-Get-Groups-Wildcard-Name-Mail
 '@ 
-Invoke-HelloIDDatasource -DatasourceName $dataSourceGuid_1_Name -DatasourceType "4" -DatasourceInput $tmpInput -DatasourcePsScript $tmpPsScript -DatasourceModel $tmpModel -DataSourceRunInCloud "False" -returnObject ([Ref]$dataSourceGuid_1) 
-<# End: DataSource "ad-group-manage-memberships | AD-Get-Users-Not-In-Group" #>
+Invoke-HelloIDDatasource -DatasourceName $dataSourceGuid_0_Name -DatasourceType "4" -DatasourceInput $tmpInput -DatasourcePsScript $tmpPsScript -DatasourceModel $tmpModel -DataSourceRunInCloud "False" -returnObject ([Ref]$dataSourceGuid_0) 
+<# End: DataSource "ad-group-manage-memberships | AD-Get-Groups-Wildcard-Name-Mail" #>
 
 <# Begin: DataSource "ad-group-manage-memberships | AD-Get-Users-In-Group" #>
 $tmpPsScript = @'
 # Variables configured in form
 $group = $datasource.selectedGroup
+$filter = "memberOf -eq '$($group.DistinguishedName)'"
+
+# Global variables
+$searchOUs = $AdUsersSearchOu
 
 # Fixed values
-$propertiesToSelect = @( 
-    "Name",                 
-    "ObjectGuid"
+$propertiesToSelect = @(
+    "ObjectGuid",
+    "SamAccountName",
+    "UserPrincipalName",
+    "Name",
+    "DisplayName",
+    "DistinguishedName"
 ) # Properties to select from Microsoft AD, comma separated
 
-try {
-    $actionMessage = "searching user(s) for group [$($group.Name)] with ObjectGuid [$($group.ObjectGuid)]"
-     
-    # Get group memberships for the user
-    $getAdGroupsSplatParams = @{
-        Verbose     = $False
-        ErrorAction = "Stop"
-        Identity    = $group.ObjectGuid
-    }
-         
-    $users = Get-ADGroupMember @getAdGroupsSplatParams | 
-    Where-Object { $_.objectClass -eq "user" } |
-    Sort-Object Name |
-    Select-Object -Property $propertiesToSelect
+# Set debug logging
+$VerbosePreference = "SilentlyContinue"
+$InformationPreference = "Continue"
+$WarningPreference = "Continue"
 
-    $resultCount = @($users).Count       
-    Write-information "User memberships: $resultCount"
-        
-    if ($resultCount -gt 0) {
-        foreach ($user in $users) {
-            Write-output $user
+try {
+    #region Searching user
+    $actionMessage = "querying AD account(s) matching the filter [$filter] in OU(s) [$($searchOUs)]"
+
+    $ous = $searchOUs -split ';'
+    $adUsers = [System.Collections.ArrayList]@()
+    foreach ($ou in $ous) {
+        $actionMessage = "querying AD account(s) matching the filter [$filter] in OU [$($ou)]"
+        $getAdUsersSplatParams = @{
+            Filter      = $filter
+            Searchbase  = $ou
+            Properties  = $propertiesToSelect
+            Verbose     = $False
+            ErrorAction = "Stop"
+        }
+        $getAdUsersResponse = Get-AdUser @getAdUsersSplatParams | Select-Object -Property $propertiesToSelect
+
+        if ($getAdUsersResponse -is [array]) {
+            [void]$adUsers.AddRange($getAdUsersResponse)
+        }
+        else {
+            [void]$adUsers.Add($getAdUsersResponse)
         }
     }
+    Write-Information "Queried AD account(s) matching the filter [$filter] in OU(s) [$($searchOUs)]. Result count: $(($adUsers | Measure-Object).Count)"
+
+    # Sort and Send results to HelloID
+    $actionMessage = "sending results to HelloID"
+    # Add DisplayValue property
+    $adUsers | Add-Member -MemberType NoteProperty -Name "DisplayValue" -Value $null -Force
+    $adUsers | ForEach-Object {
+        # Set DisplayValue property with format: Display Name [UserPrincipalName]
+        $_.DisplayValue = "$($_.Name) ($($_.UserPrincipalName))"
+        
+        Write-Output $_
+    } 
 }
 catch {
     $ex = $PSItem
     Write-Warning "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     Write-Error "Error $($actionMessage). Error: $($ex.Exception.Message)"
+    # exit # use when using multiple try/catch and the script must stop
 }
 '@ 
 $tmpModel = @'
-[{"key":"Name","type":0},{"key":"ObjectGuid","type":0}]
+[{"key":"ObjectGuid","type":0},{"key":"SamAccountName","type":0},{"key":"UserPrincipalName","type":0},{"key":"Name","type":0},{"key":"DisplayName","type":0},{"key":"DistinguishedName","type":0},{"key":"DisplayValue","type":0}]
 '@ 
 $tmpInput = @'
 [{"description":null,"translateDescription":false,"inputFieldType":1,"key":"selectedGroup","type":0,"options":1}]
@@ -457,20 +494,22 @@ ad-group-manage-memberships | AD-Get-Users-In-Group
 Invoke-HelloIDDatasource -DatasourceName $dataSourceGuid_2_Name -DatasourceType "4" -DatasourceInput $tmpInput -DatasourcePsScript $tmpPsScript -DatasourceModel $tmpModel -DataSourceRunInCloud "False" -returnObject ([Ref]$dataSourceGuid_2) 
 <# End: DataSource "ad-group-manage-memberships | AD-Get-Users-In-Group" #>
 
-<# Begin: DataSource "ad-group-manage-memberships | AD-Get-All-Groups" #>
+<# Begin: DataSource "ad-group-manage-memberships | AD-Get-All-Users" #>
 $tmpPsScript = @'
-# Variables configured in form
-$searchValue = $dataSource.searchValue
-$searchQuery = "*$searchValue*"
-$filter = "Name -like '$searchQuery'"
+# Use Name -like '*' to query all users
+$filter = "Name -like '*'"
 
 # Global variables
-$searchOU = $ADgroupsSearchOU
+$searchOUs = $AdUsersSearchOu
 
-$propertiesToSelect = @(                    
+# Fixed values
+$propertiesToSelect = @(
+    "ObjectGuid",
+    "SamAccountName",
+    "UserPrincipalName",
     "Name",
-    "DistinguishedName",
-    "ObjectGuid"
+    "DisplayName",
+    "DistinguishedName"
 ) # Properties to select from Microsoft AD, comma separated
 
 # Set debug logging
@@ -479,58 +518,69 @@ $InformationPreference = "Continue"
 $WarningPreference = "Continue"
 
 try {
-    $actionMessage = "searching AD Group(s)"
+    #region Searching user
+    $actionMessage = "querying AD account(s) matching the filter [$filter] in OU(s) [$($searchOUs)]"
 
-    if (-not [String]::IsNullOrEmpty($searchValue)) {
-        Write-information "SearchQuery: $searchQuery"
-        Write-information "SearchBase: $searchOU"
-
-        $ous = $searchOU -split ';' 
-        $groups = foreach ($item in $ous) {
-            $getAdGroupsSplatParams = @{
-                Filter      = $filter
-                Searchbase  = $item
-                Properties  = $propertiesToSelect
-                Verbose     = $False
-                ErrorAction = "Stop"
-            }
-            Get-ADGroup @getAdGroupsSplatParams | Select-Object -Property $propertiesToSelect
+    $ous = $searchOUs -split ';'
+    $adUsers = [System.Collections.ArrayList]@()
+    foreach ($ou in $ous) {
+        $actionMessage = "querying AD account(s) matching the filter [$filter] in OU [$($ou)]"
+        $getAdUsersSplatParams = @{
+            Filter      = $filter
+            Searchbase  = $ou
+            Properties  = $propertiesToSelect
+            Verbose     = $False
+            ErrorAction = "Stop"
         }
-        
-        $groups = $groups | Sort-Object -Property name
-        $resultCount = @($groups).Count
-        Write-Information "Result count: $resultCount"
+        $getAdUsersResponse = Get-AdUser @getAdUsersSplatParams | Select-Object -Property $propertiesToSelect
 
-        if ($resultCount -gt 0) {
-            foreach ($adGroup in $groups) {
-                Write-Output $adGroup
-            }
+        if ($getAdUsersResponse -is [array]) {
+            [void]$adUsers.AddRange($getAdUsersResponse)
+        }
+        else {
+            [void]$adUsers.Add($getAdUsersResponse)
         }
     }
+    # Filter out users with no name
+    $adUsers = $adUsers | Where-Object { $_.Name -ne "" }
+
+    Write-Information "Queried AD account(s) matching the filter [$filter] in OU(s) [$($searchOUs)]. Result count: $(($adUsers | Measure-Object).Count)"
+
+    # Sort and Send results to HelloID
+    $actionMessage = "sending results to HelloID"
+    # Add DisplayValue property
+    $adUsers | Add-Member -MemberType NoteProperty -Name "DisplayValue" -Value $null -Force
+    $adUsers | Sort-Object -Property Name | ForEach-Object {
+        # Set DisplayValue property with format: Display Name [UserPrincipalName]
+        $_.DisplayValue = "$($_.Name) ($($_.UserPrincipalName))"
+
+        Write-Output $_
+    } 
 }
 catch {
     $ex = $PSItem
     Write-Warning "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     Write-Error "Error $($actionMessage). Error: $($ex.Exception.Message)"
+    # exit # use when using multiple try/catch and the script must stop
 }
 '@ 
 $tmpModel = @'
-[{"key":"Name","type":0},{"key":"DistinguishedName","type":0},{"key":"ObjectGuid","type":0}]
+[{"key":"ObjectGuid","type":0},{"key":"SamAccountName","type":0},{"key":"UserPrincipalName","type":0},{"key":"Name","type":0},{"key":"DisplayName","type":0},{"key":"DistinguishedName","type":0},{"key":"DisplayValue","type":0}]
 '@ 
 $tmpInput = @'
-[{"description":null,"translateDescription":false,"inputFieldType":1,"key":"searchValue","type":0,"options":1}]
+[]
 '@ 
-$dataSourceGuid_0 = [PSCustomObject]@{} 
-$dataSourceGuid_0_Name = @'
-ad-group-manage-memberships | AD-Get-All-Groups
+$dataSourceGuid_1 = [PSCustomObject]@{} 
+$dataSourceGuid_1_Name = @'
+ad-group-manage-memberships | AD-Get-All-Users
 '@ 
-Invoke-HelloIDDatasource -DatasourceName $dataSourceGuid_0_Name -DatasourceType "4" -DatasourceInput $tmpInput -DatasourcePsScript $tmpPsScript -DatasourceModel $tmpModel -DataSourceRunInCloud "False" -returnObject ([Ref]$dataSourceGuid_0) 
-<# End: DataSource "ad-group-manage-memberships | AD-Get-All-Groups" #>
+Invoke-HelloIDDatasource -DatasourceName $dataSourceGuid_1_Name -DatasourceType "4" -DatasourceInput $tmpInput -DatasourcePsScript $tmpPsScript -DatasourceModel $tmpModel -DataSourceRunInCloud "False" -returnObject ([Ref]$dataSourceGuid_1) 
+<# End: DataSource "ad-group-manage-memberships | AD-Get-All-Users" #>
 <# End: HelloID Data sources #>
 
 <# Begin: Dynamic Form "AD Group - Manage memberships" #>
 $tmpSchema = @"
-[{"label":"Select group","fields":[{"key":"searchfield","templateOptions":{"label":"Search","placeholder":"Groupname"},"type":"input","summaryVisibility":"Hide element","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false},{"key":"gridGroups","templateOptions":{"label":"Select group","required":true,"grid":{"columns":[{"headerName":"Name","field":"Name"},{"headerName":"Distinguished Name","field":"DistinguishedName"},{"headerName":"Object Guid","field":"ObjectGuid"}],"height":300,"rowSelection":"single"},"dataSourceConfig":{"dataSourceGuid":"$dataSourceGuid_0","input":{"propertyInputs":[{"propertyName":"searchValue","otherFieldValue":{"otherFieldKey":"searchfield"}}]}},"useFilter":false,"allowCsvDownload":true},"type":"grid","summaryVisibility":"Show","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":true}]},{"label":"Members","fields":[{"key":"members","templateOptions":{"label":"Manage group memberships","required":false,"filterable":true,"useDataSource":true,"dualList":{"options":[{"guid":"75ea2890-88f8-4851-b202-626123054e14","Name":"Apple"},{"guid":"0607270d-83e2-4574-9894-0b70011b663f","Name":"Pear"},{"guid":"1ef6fe01-3095-4614-a6db-7c8cd416ae3b","Name":"Orange"}],"optionKeyProperty":"Name","optionDisplayProperty":"Name","labelLeft":"Available","labelRight":"Member of"},"dataSourceConfig":{"dataSourceGuid":"$dataSourceGuid_1","input":{"propertyInputs":[]}},"destinationDataSourceConfig":{"dataSourceGuid":"$dataSourceGuid_2","input":{"propertyInputs":[{"propertyName":"selectedGroup","otherFieldValue":{"otherFieldKey":"gridGroups"}}]}},"useFilter":false},"type":"duallist","summaryVisibility":"Show","sourceDataSourceIdentifierSuffix":"source-datasource","destinationDataSourceIdentifierSuffix":"destination-datasource","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false}]}]
+[{"label":"Select group","fields":[{"key":"searchValue","templateOptions":{"label":"Search (wildcard search in Name, Display name, UserPrincipalName and Mail)","placeholder":"Name, Display name, UserPrincipalName or Mail (use * to search all groups)","required":true,"minLength":1},"type":"input","summaryVisibility":"Hide element","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false},{"key":"gridGroups","templateOptions":{"label":"Select group","required":true,"grid":{"columns":[{"headerName":"Name","field":"Name"},{"headerName":"Description","field":"Description"},{"headerName":"Mail","field":"Mail"}],"height":300,"rowSelection":"single"},"dataSourceConfig":{"dataSourceGuid":"$dataSourceGuid_0","input":{"propertyInputs":[{"propertyName":"searchValue","otherFieldValue":{"otherFieldKey":"searchValue"}}]}},"useFilter":false,"allowCsvDownload":true},"type":"grid","summaryVisibility":"Show","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":true}]},{"label":"Members","fields":[{"key":"members","templateOptions":{"label":"Manage group memberships","required":false,"filterable":true,"useDataSource":true,"dualList":{"options":[{"guid":"75ea2890-88f8-4851-b202-626123054e14","Name":"Apple"},{"guid":"0607270d-83e2-4574-9894-0b70011b663f","Name":"Pear"},{"guid":"1ef6fe01-3095-4614-a6db-7c8cd416ae3b","Name":"Orange"}],"optionKeyProperty":"ObjectGuid","optionDisplayProperty":"DisplayValue","labelLeft":"Available users","labelRight":"Current members"},"dataSourceConfig":{"dataSourceGuid":"$dataSourceGuid_1","input":{"propertyInputs":[]}},"destinationDataSourceConfig":{"dataSourceGuid":"$dataSourceGuid_2","input":{"propertyInputs":[{"propertyName":"selectedGroup","otherFieldValue":{"otherFieldKey":"gridGroups"}}]}},"useFilter":false},"type":"duallist","summaryVisibility":"Show","sourceDataSourceIdentifierSuffix":"source-datasource","destinationDataSourceIdentifierSuffix":"destination-datasource","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false}]}]
 "@ 
 
 $dynamicFormGuid = [PSCustomObject]@{} 
@@ -595,7 +645,7 @@ $delegatedFormName = @'
 AD Group - Manage memberships
 '@
 $tmpTask = @'
-{"name":"AD Group - Manage memberships","script":"# variables configured in form\r\n$group = $form.gridGroups\r\n$usersToAdd = $form.members.leftToRight\r\n$usersToRemove = $form.members.rightToLeft\r\n\r\n# Set debug logging\r\n$VerbosePreference = \"SilentlyContinue\"\r\n$InformationPreference = \"Continue\"\r\n$WarningPreference = \"Continue\"\r\n\r\nWrite-Verbose \"User(s) to add: $usersToAdd\"\r\nWrite-Verbose \"User(s) to remove: $usersToRemove\"\r\n\r\nforeach ($user in $usersToAdd) {\r\n    try {\r\n        $actionMessage = \"adding AD user(s) to group [$($group.DisplayName)] with objectguid [$($group.ObjectGuid)]\"\r\n                    \r\n        Add-ADGroupMember -Identity $group.ObjectGuid -Members $user.sAMAccountName -Confirm:$false\r\n        Write-Information \"Successfully added AD user $adUserDisplayName ($adUserSID) to group $adGroupDisplayName ($adGroupSID)\"\r\n\r\n        $Log = @{\r\n            Action            = \"GrantMembership\" # optional. ENUM (undefined = default) \r\n            System            = \"ActiveDirectory\" # optional (free format text) \r\n            Message           = \"Successfully added AD user $adUserDisplayName ($adUserSID) to group $adGroupDisplayName ($adGroupSID)\" # required (free format text) \r\n            IsError           = $false # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n            TargetDisplayName = $groupName # optional (free format text)\r\n            TargetIdentifier  = $adGroupSID # optional (free format text)\r\n        }\r\n        #send result back  \r\n        Write-Information -Tags \"Audit\" -MessageData $log\r\n    }\r\n    catch {\r\n        $adGroupSID = $([string]$adGroup.SID)\r\n        $Log = @{\r\n            Action            = \"GrantMembership\" # optional. ENUM (undefined = default) \r\n            System            = \"ActiveDirectory\" # optional (free format text) \r\n            Message           = \"Failed to add AD user $adUserDisplayName ($adUserSID) to group $adGroupDisplayName ($adGroupSID). Error: $($_.Exception.Message)\" # required (free format text) \r\n            IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n            TargetDisplayName = $groupName # optional (free format text)\r\n            TargetIdentifier  = $adGroupSID # optional (free format text)\r\n        }\r\n        #send result back  \r\n        Write-Information -Tags \"Audit\" -MessageData $log\r\n\r\n        Write-Error \"Could not add AD user $adUserDisplayName ($adUserSID) to group $adGroupDisplayName ($adGroupSID). Error: $($_.Exception.Message)\"            \r\n    }\r\n}\r\n\r\nforeach ($user in $usersToRemove) {\r\n    try {\r\n        $actionMessage = \"removing AD group(s) for user [$($user.userPrincipalName)] with objectguid [$($user.ObjectGuid)]\"\r\n\r\n        Remove-ADGroupMember -Identity $group.ObjectGuid -Members $user.sAMAccountName -Confirm:$false\r\n        Write-verbose -verbose \"Successfully removed AD user [$($user.userPrincipalName)] with objectguid [$($user.ObjectGuid)] from AD group [$($group.name)]\"\r\n\r\n        $Log = @{\r\n            Action            = \"RevokeMembership\" # optional. ENUM (undefined = default) \r\n            System            = \"ActiveDirectory\" # optional (free format text) \r\n            Message           = \"Successfully removed AD user [$($user.userPrincipalName)] with objectguid [$($user.ObjectGuid)] from group $($group.name)\" # required (free format text) \r\n            IsError           = $false # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n            TargetDisplayName = $user.userPrincipalName # optional (free format text) \r\n            TargetIdentifier  = $user.ObjectGuid # optional (free format text) \r\n        }\r\n        #send result back  \r\n        Write-Information -Tags \"Audit\" -MessageData $log\r\n    }\r\n    catch {\r\n        $ex = $PSItem\r\n        $auditMessage = \"Error $($actionMessage). Error: $($ex.Exception.Message)\"\r\n        $warningMessage = \"Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)\"\r\n\r\n        $Log = @{\r\n            Action            = \"RevokeMembership\" # optional. ENUM (undefined = default) \r\n            System            = \"ActiveDirectory\" # optional (free format text) \r\n            Message           = $auditMessage # required (free format text) \r\n            IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n            TargetDisplayName = $user.userPrincipalName # optional (free format text) \r\n            TargetIdentifier  = $user.ObjectGuid # optional (free format text) \r\n        }\r\n        #send result back  \r\n        Write-Information -Tags \"Audit\" -MessageData $log\r\n        Write-Warning $warningMessage   \r\n        Write-Error $auditMessage\r\n    }\r\n}","runInCloud":false}
+{"name":"AD Group - Manage memberships","script":"$VerbosePreference = \"SilentlyContinue\"\r\n$InformationPreference = \"Continue\"\r\n$WarningPreference = \"Continue\"\r\n\r\n# variables configured in form\r\n$group = $form.gridGroups\r\n$usersToAdd = $form.members.leftToRight\r\n$usersToRemove = $form.members.rightToLeft\r\n\r\nforeach ($userToAdd in $usersToAdd) {\r\n    try {\r\n        # Add member to group\r\n        # https://learn.microsoft.com/en-us/powershell/module/activedirectory/add-adgroupmember\r\n        $actionMessage = \"adding user with displayName [$($userToAdd.displayName)] and objectGuid [$($userToAdd.objectGuid)] as member to group with name [$($group.Name)] and objectGuid [$($group.ObjectGuid)]\"\r\n\r\n        $addGroupMemberSplatParams = @{\r\n            Identity    = $group.ObjectGuid\r\n            Members     = $userToAdd.ObjectGuid\r\n            Verbose     = $false\r\n            ErrorAction = \"Stop\"\r\n        }\r\n        Add-ADGroupMember @addGroupMemberSplatParams\r\n\r\n        # Send auditlog to HelloID\r\n        $Log = @{\r\n            Action            = \"GrantMembership\" # optional. ENUM (undefined = default) \r\n            System            = \"ActiveDirectory\" # optional (free format text) \r\n            Message           = \"Added user with displayName [$($userToAdd.displayName)] and objectGuid [$($userToAdd.objectGuid)] as member to group with name [$($group.Name)] and objectGuid [$($group.ObjectGuid)].\" # required (free format text) \r\n            IsError           = $false # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n            TargetDisplayName = $group.Name # optional (free format text) \r\n            TargetIdentifier  = $group.ObjectGuid # optional (free format text) \r\n        }\r\n        Write-Information -Tags \"Audit\" -MessageData $log\r\n    }\r\n    catch {\r\n        $ex = $PSItem\r\n        $auditMessage = \"Error $($actionMessage). Error: $($ex.Exception.Message)\"\r\n        $warningMessage = \"Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)\"\r\n        $log = @{\r\n            Action            = \"GrantMembership\" # optional. ENUM (undefined = default) \r\n            System            = \"ActiveDirectory\" # optional (free format text) \r\n            Message           = $auditMessage # required (free format text) \r\n            IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n            TargetDisplayName = $group.Name # optional (free format text) \r\n            TargetIdentifier  = $group.ObjectGuid # optional (free format text) \r\n        }\r\n        Write-Information -Tags \"Audit\" -MessageData $log\r\n        Write-Warning $warningMessage   \r\n        Write-Error $auditMessage\r\n    }\r\n}\r\n\r\nforeach ($userToRemove in $usersToRemove) {\r\n    try {\r\n        # Remove member from group\r\n        # https://learn.microsoft.com/en-us/powershell/module/activedirectory/remove-adgroupmember\r\n        $actionMessage = \"removing user with displayName [$($userToRemove.displayName)] and objectGuid [$($userToRemove.objectGuid)] as member from group with name [$($group.Name)] and objectGuid [$($group.ObjectGuid)]\"\r\n        \r\n        $removeGroupMemberSplatParams = @{\r\n            Identity    = $group.ObjectGuid\r\n            Members     = $userToRemove.ObjectGuid\r\n            Confirm     = $false\r\n            ErrorAction = \"Stop\"\r\n        }\r\n        Remove-ADGroupMember @removeGroupMemberSplatParams\r\n\r\n        # Send auditlog to HelloID\r\n        $Log = @{\r\n            Action            = \"RevokeMembership\" # optional. ENUM (undefined = default) \r\n            System            = \"ActiveDirectory\" # optional (free format text) \r\n            Message           = \"Removed user with displayName [$($userToRemove.displayName)] and objectGuid [$($userToRemove.objectGuid)] as member from group with name [$($group.Name)] and objectGuid [$($group.ObjectGuid)].\" # required (free format text) \r\n            IsError           = $false # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n            TargetDisplayName = $group.Name # optional (free format text) \r\n            TargetIdentifier  = $group.ObjectGuid # optional (free format text) \r\n        }\r\n        Write-Information -Tags \"Audit\" -MessageData $log\r\n    }\r\n    catch {\r\n        $ex = $PSItem\r\n        $auditMessage = \"Error $($actionMessage). Error: $($ex.Exception.Message)\"\r\n        $warningMessage = \"Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)\"\r\n        $log = @{\r\n            Action            = \"RevokeMembership\" # optional. ENUM (undefined = default) \r\n            System            = \"ActiveDirectory\" # optional (free format text) \r\n            Message           = $auditMessage # required (free format text) \r\n            IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n            TargetDisplayName = $group.Name # optional (free format text) \r\n            TargetIdentifier  = $group.ObjectGuid # optional (free format text) \r\n        }\r\n        Write-Information -Tags \"Audit\" -MessageData $log\r\n        Write-Warning $warningMessage   \r\n        Write-Error $auditMessage\r\n    }\r\n}","runInCloud":false}
 '@ 
 
 Invoke-HelloIDDelegatedForm -DelegatedFormName $delegatedFormName -DynamicFormGuid $dynamicFormGuid -AccessGroups $delegatedFormAccessGroupGuids -Categories $delegatedFormCategoryGuids -UseFaIcon "True" -FaIcon "fa fa-users" -task $tmpTask -returnObject ([Ref]$delegatedFormRef) 

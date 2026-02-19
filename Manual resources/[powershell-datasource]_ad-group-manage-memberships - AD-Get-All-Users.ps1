@@ -1,6 +1,5 @@
-# Variables configured in form
-$group = $datasource.selectedGroup
-$filter = "memberOf -eq '$($group.DistinguishedName)'"
+# Use Name -like '*' to query all users
+$filter = "Name -like '*'"
 
 # Global variables
 $searchOUs = $AdUsersSearchOu
@@ -44,16 +43,19 @@ try {
             [void]$adUsers.Add($getAdUsersResponse)
         }
     }
+    # Filter out users with no name
+    $adUsers = $adUsers | Where-Object { $_.Name -ne "" }
+
     Write-Information "Queried AD account(s) matching the filter [$filter] in OU(s) [$($searchOUs)]. Result count: $(($adUsers | Measure-Object).Count)"
 
     # Sort and Send results to HelloID
     $actionMessage = "sending results to HelloID"
     # Add DisplayValue property
     $adUsers | Add-Member -MemberType NoteProperty -Name "DisplayValue" -Value $null -Force
-    $adUsers | ForEach-Object {
+    $adUsers | Sort-Object -Property Name | ForEach-Object {
         # Set DisplayValue property with format: Display Name [UserPrincipalName]
         $_.DisplayValue = "$($_.Name) ($($_.UserPrincipalName))"
-        
+
         Write-Output $_
     } 
 }
