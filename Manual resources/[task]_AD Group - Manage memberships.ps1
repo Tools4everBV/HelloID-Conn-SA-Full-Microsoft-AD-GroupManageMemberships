@@ -3,97 +3,92 @@ $InformationPreference = "Continue"
 $WarningPreference = "Continue"
 
 # variables configured in form
-$groupName = $form.gridGroups.name
+$group = $form.gridGroups
 $usersToAdd = $form.members.leftToRight
 $usersToRemove = $form.members.rightToLeft
 
-try{
-    $adGroup = Get-ADgroup $groupName
-    Write-Information "Found AD group [$groupName]"
-}catch{
-    Write-Error "Could not find AD group [$groupName]. Error: $($_.Exception.Message)"
-}
+foreach ($userToAdd in $usersToAdd) {
+    try {
+        # Add member to group
+        # https://learn.microsoft.com/en-us/powershell/module/activedirectory/add-adgroupmember
+        $actionMessage = "adding user with displayName [$($userToAdd.displayName)] and objectGuid [$($userToAdd.objectGuid)] as member to group with name [$($group.Name)] and objectGuid [$($group.ObjectGuid)]"
 
-if($usersToAdd -ne $null){
-    foreach($userToAdd in $usersToAdd){
-        try{
-            $adUser = Get-ADuser $userToAdd.sAMAccountName
-            
-            $adUserDisplayName = $adUser.DisplayName
-            $adUserSID = $([string]$adUser.SID)
-
-            $adGroupDisplayName = $adGroup.DisplayName
-            $adGroupSID = $([string]$adGroup.SID)
-
-            $addMember = Add-ADGroupMember -Identity $adGroup -Members $adUser.sAMAccountName -Confirm:$false
-            Write-Information "Successfully added AD user $adUserDisplayName ($adUserSID) to group $adGroupDisplayName ($adGroupSID)"
-
-            $Log = @{
-                Action            = "GrantMembership" # optional. ENUM (undefined = default) 
-                System            = "ActiveDirectory" # optional (free format text) 
-                Message           = "Successfully added AD user $adUserDisplayName ($adUserSID) to group $adGroupDisplayName ($adGroupSID)" # required (free format text) 
-                IsError           = $false # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) 
-                TargetDisplayName = $groupName # optional (free format text)
-                TargetIdentifier  = $adGroupSID # optional (free format text)
-            }
-            #send result back  
-            Write-Information -Tags "Audit" -MessageData $log
-        }catch{
-            $adGroupSID = $([string]$adGroup.SID)
-            $Log = @{
-                Action            = "GrantMembership" # optional. ENUM (undefined = default) 
-                System            = "ActiveDirectory" # optional (free format text) 
-                Message           = "Failed to add AD user $adUserDisplayName ($adUserSID) to group $adGroupDisplayName ($adGroupSID). Error: $($_.Exception.Message)" # required (free format text) 
-                IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) 
-                TargetDisplayName = $groupName # optional (free format text)
-                TargetIdentifier  = $adGroupSID # optional (free format text)
-            }
-            #send result back  
-            Write-Information -Tags "Audit" -MessageData $log
-
-            Write-Error "Could not add AD user $adUserDisplayName ($adUserSID) to group $adGroupDisplayName ($adGroupSID). Error: $($_.Exception.Message)"            
+        $addGroupMemberSplatParams = @{
+            Identity    = $group.ObjectGuid
+            Members     = $userToAdd.ObjectGuid
+            Verbose     = $false
+            ErrorAction = "Stop"
         }
+        Add-ADGroupMember @addGroupMemberSplatParams
+
+        # Send auditlog to HelloID
+        $Log = @{
+            Action            = "GrantMembership" # optional. ENUM (undefined = default) 
+            System            = "ActiveDirectory" # optional (free format text) 
+            Message           = "Added user with displayName [$($userToAdd.displayName)] and objectGuid [$($userToAdd.objectGuid)] as member to group with name [$($group.Name)] and objectGuid [$($group.ObjectGuid)]." # required (free format text) 
+            IsError           = $false # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) 
+            TargetDisplayName = $group.Name # optional (free format text) 
+            TargetIdentifier  = $group.ObjectGuid # optional (free format text) 
+        }
+        Write-Information -Tags "Audit" -MessageData $log
+    }
+    catch {
+        $ex = $PSItem
+        $auditMessage = "Error $($actionMessage). Error: $($ex.Exception.Message)"
+        $warningMessage = "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
+        $log = @{
+            Action            = "GrantMembership" # optional. ENUM (undefined = default) 
+            System            = "ActiveDirectory" # optional (free format text) 
+            Message           = $auditMessage # required (free format text) 
+            IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) 
+            TargetDisplayName = $group.Name # optional (free format text) 
+            TargetIdentifier  = $group.ObjectGuid # optional (free format text) 
+        }
+        Write-Information -Tags "Audit" -MessageData $log
+        Write-Warning $warningMessage   
+        Write-Error $auditMessage
     }
 }
 
-if($usersToRemove -ne $null){
-    foreach($userToRemove in $usersToRemove){
-        try{
-            $adUser = Get-ADuser $userToRemove.sAMAccountName
-            
-            $adUserDisplayName = $adUser.DisplayName
-            $adUserSID = $([string]$adUser.SID)
-
-            $adGroupDisplayName = $adGroup.DisplayName
-            $adGroupSID = $([string]$adGroup.SID)
-
-            $addMember = Remove-ADGroupMember -Identity $adGroup -Members $adUser.sAMAccountName -Confirm:$false
-            Write-Information "Successfully removed AD user $adUserDisplayName ($adUserSID) from group $adGroupDisplayName ($adGroupSID)"
-
-            $Log = @{
-                Action            = "RevokeMembership" # optional. ENUM (undefined = default) 
-                System            = "ActiveDirectory" # optional (free format text) 
-                Message           = "Successfully removed AD user $adUserDisplayName ($adUserSID) from group $adGroupDisplayName ($adGroupSID)" # required (free format text) 
-                IsError           = $false # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) 
-                TargetDisplayName = $groupName # optional (free format text)
-                TargetIdentifier  = $adGroupSID # optional (free format text)
-            }
-            #send result back  
-            Write-Information -Tags "Audit" -MessageData $log
-        }catch{
-            $adGroupSID = $([string]$adGroup.SID)
-            $Log = @{
-                Action            = "RevokeMembership" # optional. ENUM (undefined = default) 
-                System            = "ActiveDirectory" # optional (free format text) 
-                Message           = "Failed to remove AD user $adUserDisplayName ($adUserSID) from group $adGroupDisplayName ($adGroupSID). Error: $($_.Exception.Message)" # required (free format text) 
-                IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) 
-                TargetDisplayName = $groupName # optional (free format text)
-                TargetIdentifier  = $adGroupSID # optional (free format text)
-            }
-            #send result back  
-            Write-Information -Tags "Audit" -MessageData $log
-
-            Write-Error "Could not add AD user $adUserDisplayName ($adUserSID) from group $adGroupDisplayName ($adGroupSID). Error: $($_.Exception.Message)"
+foreach ($userToRemove in $usersToRemove) {
+    try {
+        # Remove member from group
+        # https://learn.microsoft.com/en-us/powershell/module/activedirectory/remove-adgroupmember
+        $actionMessage = "removing user with displayName [$($userToRemove.displayName)] and objectGuid [$($userToRemove.objectGuid)] as member from group with name [$($group.Name)] and objectGuid [$($group.ObjectGuid)]"
+        
+        $removeGroupMemberSplatParams = @{
+            Identity    = $group.ObjectGuid
+            Members     = $userToRemove.ObjectGuid
+            Confirm     = $false
+            ErrorAction = "Stop"
         }
+        Remove-ADGroupMember @removeGroupMemberSplatParams
+
+        # Send auditlog to HelloID
+        $Log = @{
+            Action            = "RevokeMembership" # optional. ENUM (undefined = default) 
+            System            = "ActiveDirectory" # optional (free format text) 
+            Message           = "Removed user with displayName [$($userToRemove.displayName)] and objectGuid [$($userToRemove.objectGuid)] as member from group with name [$($group.Name)] and objectGuid [$($group.ObjectGuid)]." # required (free format text) 
+            IsError           = $false # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) 
+            TargetDisplayName = $group.Name # optional (free format text) 
+            TargetIdentifier  = $group.ObjectGuid # optional (free format text) 
+        }
+        Write-Information -Tags "Audit" -MessageData $log
+    }
+    catch {
+        $ex = $PSItem
+        $auditMessage = "Error $($actionMessage). Error: $($ex.Exception.Message)"
+        $warningMessage = "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
+        $log = @{
+            Action            = "RevokeMembership" # optional. ENUM (undefined = default) 
+            System            = "ActiveDirectory" # optional (free format text) 
+            Message           = $auditMessage # required (free format text) 
+            IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) 
+            TargetDisplayName = $group.Name # optional (free format text) 
+            TargetIdentifier  = $group.ObjectGuid # optional (free format text) 
+        }
+        Write-Information -Tags "Audit" -MessageData $log
+        Write-Warning $warningMessage   
+        Write-Error $auditMessage
     }
 }

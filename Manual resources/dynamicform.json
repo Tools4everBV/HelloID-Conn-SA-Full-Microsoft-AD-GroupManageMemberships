@@ -3,10 +3,12 @@
     "label": "Select group",
     "fields": [
       {
-        "key": "searchfield",
+        "key": "searchValue",
         "templateOptions": {
-          "label": "Search",
-          "placeholder": ""
+          "label": "Search (wildcard search in Name, Display name, UserPrincipalName and Mail)",
+          "placeholder": "Name, Display name, UserPrincipalName or Mail (use * to search all groups)",
+          "required": true,
+          "minLength": 1
         },
         "type": "input",
         "summaryVisibility": "Hide element",
@@ -23,11 +25,15 @@
             "columns": [
               {
                 "headerName": "Name",
-                "field": "name"
+                "field": "Name"
               },
               {
                 "headerName": "Description",
-                "field": "description"
+                "field": "Description"
+              },
+              {
+                "headerName": "Mail",
+                "field": "Mail"
               }
             ],
             "height": 300,
@@ -40,13 +46,14 @@
                 {
                   "propertyName": "searchValue",
                   "otherFieldValue": {
-                    "otherFieldKey": "searchfield"
+                    "otherFieldKey": "searchValue"
                   }
                 }
               ]
             }
           },
-          "useFilter": false
+          "useFilter": false,
+          "allowCsvDownload": true
         },
         "type": "grid",
         "summaryVisibility": "Show",
@@ -81,10 +88,10 @@
                 "Name": "Orange"
               }
             ],
-            "optionKeyProperty": "sAMAccountName",
-            "optionDisplayProperty": "name",
-            "labelLeft": "Available",
-            "labelRight": "Member of"
+            "optionKeyProperty": "ObjectGuid",
+            "optionDisplayProperty": "DisplayValue",
+            "labelLeft": "Available users",
+            "labelRight": "Current members"
           },
           "dataSourceConfig": {
             "dataSourceGuid": "$dataSourceGuid_1",
