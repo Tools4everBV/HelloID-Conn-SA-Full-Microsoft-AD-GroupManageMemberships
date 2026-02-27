@@ -21,7 +21,7 @@ $tmpName = @'
 AdGroupsSearchOU
 '@ 
 $tmpValue = @'
-DC=zeeman,DC=com
+OU=ApplicationGroups,OU=enyoi,DC=enyoi,DC=local;OU=DistributionGroups,OU=enyoi,DC=enyoi,DC=local
 '@ 
 $globalHelloIDVariables.Add([PSCustomObject]@{name = $tmpName; value = $tmpValue; secret = "False"});
 
@@ -30,7 +30,7 @@ $tmpName = @'
 ADusersSearchOU
 '@ 
 $tmpValue = @'
-DC=zeeman,DC=com
+OU=Users,OU=enyoi,DC=enyoi,DC=local;OU=UsersLite,OU=enyoi,DC=enyoi,DC=local
 '@ 
 $globalHelloIDVariables.Add([PSCustomObject]@{name = $tmpName; value = $tmpValue; secret = "False"});
 
